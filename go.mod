@@ -31,6 +31,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/nathabonfim59/fyneline v1.0.0
 	github.com/stretchr/testify v1.11.1
+	github.com/ulikunitz/xz v0.5.17
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976
 	golang.org/x/oauth2 v0.36.0

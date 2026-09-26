@@ -38,6 +38,7 @@ import (
 	"github.com/ErikKalkoken/evebuddy/internal/icons"
 	"github.com/ErikKalkoken/evebuddy/internal/janiceservice"
 	"github.com/ErikKalkoken/evebuddy/internal/optional"
+	"github.com/ErikKalkoken/evebuddy/internal/selfupdate"
 	"github.com/ErikKalkoken/evebuddy/internal/xiter"
 	"github.com/ErikKalkoken/evebuddy/internal/xmaps"
 	"github.com/ErikKalkoken/evebuddy/internal/xsync"
@@ -81,6 +82,12 @@ type UIParams struct {
 	IsMobile         bool
 	IsOfflineMode    bool
 	IsUpdateDisabled bool
+	// RequestRelaunch asks the app to start a new instance after it has shut
+	// down. When nil, applying an update will not offer a restart.
+	RequestRelaunch func()
+	// SelfUpdate applies app updates in place. When nil, the UI only links to
+	// the download page, which is the case on mobile.
+	SelfUpdate *selfupdate.Updater
 }
 
 // baseUI represents the core UI logic and is used by both the desktop and mobile UI.
@@ -98,6 +105,7 @@ type baseUI struct {
 	onUpdateCorporationWalletTotals func(balance optional.Optional[float64])
 	onUpdateMissingScope            func(characterCount int)
 	onUpdateStatus                  func(ctx context.Context)
+	requestRelaunch                 func() // restart the app after shutdown
 	showMailIndicator               func()
 	showManageCharacters            func()
 
@@ -160,6 +168,7 @@ type baseUI struct {
 	rs       *corporationservice.CorporationService
 	scs      *statuscache.StatusCache
 	settings *settings.Settings
+	su       *selfupdate.Updater // applies app updates; nil when unavailable
 
 	// UI state & configuration
 	app                            fyne.App
@@ -233,6 +242,7 @@ func newBaseUI(arg UIParams) *baseUI {
 		rs:                             arg.Corporation,
 		scs:                            arg.StatusCache,
 		settings:                       arg.Settings,
+		su:                             arg.SelfUpdate,
 		signals:                        arg.Signals,
 		statusText:                     newStatusText(),
 		windows:                        make(map[string]fyne.Window),
@@ -242,6 +252,12 @@ func newBaseUI(arg UIParams) *baseUI {
 
 	u.window = u.app.NewWindow(ui.Name())
 	u.isUpdateDisabled.Store(arg.IsUpdateDisabled)
+
+	if arg.RequestRelaunch != nil {
+		u.requestRelaunch = arg.RequestRelaunch
+	} else {
+		u.requestRelaunch = func() {}
+	}
 
 	if arg.ClearCacheFunc != nil {
 		u.clearCache = arg.ClearCacheFunc

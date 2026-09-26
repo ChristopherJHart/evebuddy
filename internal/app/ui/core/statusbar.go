@@ -21,7 +21,6 @@ import (
 	"github.com/ErikKalkoken/go-set"
 
 	"github.com/ErikKalkoken/evebuddy/internal/app"
-	"github.com/ErikKalkoken/evebuddy/internal/app/ui"
 	"github.com/ErikKalkoken/evebuddy/internal/app/ui/charactermanager"
 	"github.com/ErikKalkoken/evebuddy/internal/app/ui/updatestatus"
 	"github.com/ErikKalkoken/evebuddy/internal/github"
@@ -104,7 +103,7 @@ func newStatusBar(u *DesktopUI) *statusBar {
 	a.eveClock.SetToolTip("Current EVE time - click to enlarge")
 	a.eveStatus = NewStatusBarItem(theme.MediaRecordIcon(), "?", a.showEveStatusDialog)
 	a.eveStatus.SetToolTip("EVE server status - click for details")
-	a.updateHint = newUpdateHint(u.IsDeveloperMode(), u.MainWindow())
+	a.updateHint = newUpdateHint(u.ShowUpdateDialog)
 	a.updateHint.Hide()
 	return a
 }
@@ -361,49 +360,32 @@ func (a *statusBar) setEveStatus(status eveStatus, title, errorMessage string) {
 type updateHint struct {
 	widget.BaseWidget
 
-	current         *widget.Label
-	isDeveloperMode bool
-	latest          *widget.Label
-	window          fyne.Window
+	mu      sync.RWMutex
+	version github.VersionInfo
+	// showDialog opens the update dialog for the version last passed to set.
+	showDialog func(github.VersionInfo)
 }
 
-func newUpdateHint(isDeveloperMode bool, window fyne.Window) *updateHint {
+func newUpdateHint(showDialog func(github.VersionInfo)) *updateHint {
 	w := &updateHint{
-		current:         widget.NewLabel(""),
-		isDeveloperMode: isDeveloperMode,
-		latest:          widget.NewLabel(""),
-		window:          window,
+		showDialog: showDialog,
 	}
 	w.ExtendBaseWidget(w)
 	return w
 }
 
 func (w *updateHint) set(v github.VersionInfo) {
-	w.current.SetText(v.Local)
-	w.latest.SetText(v.Latest)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.version = v
 }
 
 func (w *updateHint) CreateRenderer() fyne.WidgetRenderer {
 	l := xwidget.NewCustomHyperlink("Update available", func() {
-		c := container.NewVBox(
-			container.NewHBox(widget.NewLabel("Latest version:"), layout.NewSpacer(), w.latest),
-			container.NewHBox(widget.NewLabel("You have:"), layout.NewSpacer(), w.current),
-			xwidget.NewStandardSpacer(),
-		)
-		u := ui.WebsiteRootURL().JoinPath("releases")
-		d := dialog.NewCustomConfirm(
-			"Update available", "Download", "Close", c, func(ok bool) {
-				if !ok {
-					return
-				}
-				if err := fyne.CurrentApp().OpenURL(u); err != nil {
-					ui.ShowErrorAndLog("Failed to open download page", err, w.isDeveloperMode, w.window)
-				}
-			},
-			w.window,
-		)
-		xdesktop.DisableShortcutsForDialog(d, w.window)
-		d.Show()
+		w.mu.RLock()
+		v := w.version
+		w.mu.RUnlock()
+		w.showDialog(v)
 	})
 	c := container.NewHBox(l, widget.NewSeparator())
 	return widget.NewSimpleRenderer(c)

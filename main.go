@@ -20,6 +20,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -48,6 +49,7 @@ import (
 	"github.com/ErikKalkoken/evebuddy/internal/deleteapp"
 	"github.com/ErikKalkoken/evebuddy/internal/janiceservice"
 	"github.com/ErikKalkoken/evebuddy/internal/remoteservice"
+	"github.com/ErikKalkoken/evebuddy/internal/selfupdate"
 	"github.com/ErikKalkoken/evebuddy/internal/xgoesi"
 	"github.com/ErikKalkoken/evebuddy/internal/xmaps"
 	"github.com/ErikKalkoken/evebuddy/internal/xstrings"
@@ -76,6 +78,17 @@ const (
 	userAgentEmail      = "kalkoken87@gmail.com"
 )
 
+// selfUpdateConfig describes how our releases are named and packaged, so that
+// the app can find and apply the asset matching the running installation.
+// It must stay in sync with the packaging steps in .github/workflows/ci-cd.yml.
+var selfUpdateConfig = selfupdate.Config{
+	AppImageBaseName: "EVE_Buddy",
+	AssetBaseName:    appName,
+	BundleName:       appNameVerbose + ".app",
+	ExeName:          appNameVerbose + ".exe",
+	TarBinaryPath:    "usr/local/bin/" + appName,
+}
+
 // define flags
 var (
 	clearCacheFlag                = flag.Bool("clear-cache", false, "Clear the cache")
@@ -95,6 +108,22 @@ var (
 )
 
 func main() {
+	// The relaunch happens here rather than inside run, because it must not
+	// start before the app has fully shut down: run still holds the single
+	// instance lock, and a second instance that finds the lock taken only
+	// raises the running window and exits.
+	if !run() {
+		return
+	}
+	if err := selfupdate.Relaunch(); err != nil {
+		log.Printf("ERROR Failed to restart after update: %s", err)
+		os.Exit(1)
+	}
+}
+
+// run starts the application and blocks until it shuts down. It reports whether
+// the app should be relaunched, which the UI requests after applying an update.
+func run() (relaunch bool) {
 	// init log & flags
 	slog.SetLogLoggerLevel(logLevelDefault)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -211,6 +240,17 @@ func main() {
 		}
 		defer mu.Release()
 		slog.Info("Identified as primary instance")
+	}
+
+	// Self-update is desktop only: on Android an APK can not be replaced by the
+	// app itself.
+	var updater *selfupdate.Updater
+	if isDesktop {
+		updater = selfupdate.New(selfUpdateConfig)
+		// Remove the executable replaced by an earlier update, which on Windows
+		// could not be deleted while it was still running, plus any staging
+		// directory left behind by an interrupted update.
+		updater.Cleanup()
 	}
 
 	// crashfile
@@ -408,6 +448,10 @@ func main() {
 		key = fyneApp.Metadata().Custom["janiceAPIKey"]
 	}
 	slog.Info("Janice API key", "value", xstrings.Obfuscate(key, 4, 'X'))
+	// Set by the UI once an update has been applied and the user opted to
+	// restart. Read after shutdown by main.
+	var relaunchRequested atomic.Bool
+
 	params := core.UIParams{
 		App:              fyneApp,
 		Character:        cs,
@@ -423,6 +467,8 @@ func main() {
 		IsOfflineMode:    *offlineFlag,
 		IsUpdateDisabled: *disableUpdatesFlag,
 		Janice:           janiceservice.New(rhc2.StandardClient(), key),
+		RequestRelaunch:  func() { relaunchRequested.Store(true) },
+		SelfUpdate:       updater,
 		Settings:         settings,
 		Signals:          signals,
 		StatusCache:      scs,
@@ -443,6 +489,7 @@ func main() {
 		u := core.NewMobileUI(params)
 		u.ShowAndRun()
 	}
+	return relaunchRequested.Load()
 }
 
 // realtime represents the current time.

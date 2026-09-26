@@ -16,6 +16,7 @@ import (
 
 	"github.com/ErikKalkoken/evebuddy/internal/app/ui"
 	"github.com/ErikKalkoken/evebuddy/internal/github"
+	"github.com/ErikKalkoken/evebuddy/internal/xwidget"
 )
 
 const (
@@ -65,7 +66,16 @@ func makeAboutPage(u *baseUI) fyne.CanvasObject {
 	support := widget.NewLabel("For support please open an issue on our web site or join our Discord server.")
 	support.Wrapping = fyne.TextWrapWord
 
-	updateAvailableLink := widget.NewHyperlink("Download", rootURL.JoinPath("releases"))
+	// The label is chosen for what the link actually does: install the update
+	// in place, or send the user to the download page.
+	updateLinkLabel := "Download"
+	if u.CanSelfUpdate() {
+		updateLinkLabel = "Update now"
+	}
+	var updateVersion github.VersionInfo
+	updateAvailableLink := xwidget.NewCustomHyperlink(updateLinkLabel, func() {
+		u.ShowUpdateDialog(updateVersion)
+	})
 	updateAvailableRow := container.NewHBox(
 		widget.NewLabelWithStyle("Update available", fyne.TextAlignLeading, fyne.TextStyle{
 			Bold: true,
@@ -83,7 +93,7 @@ func makeAboutPage(u *baseUI) fyne.CanvasObject {
 			return
 		}
 		fyne.Do(func() {
-			updateAvailableLink.URL = rootURL.JoinPath("releases", "tag", "v"+v.Latest)
+			updateVersion = v
 			updateAvailableRow.Show()
 		})
 	}()
