@@ -14,7 +14,7 @@
 //
 // Applying an update does not restart the app. The caller is responsible for
 // relaunching, which must happen after the app has fully shut down. See
-// [Relaunch].
+// [Updater.Relaunch].
 package selfupdate
 
 import (
@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 )
 
 // Errors returned by this package.
@@ -118,6 +119,11 @@ type Plan struct {
 // Updater applies updates to the running installation.
 type Updater struct {
 	config Config
+
+	// applied is the plan of the last successfully applied update, which
+	// [Updater.Relaunch] starts. Set from the update goroutine, read after
+	// shutdown.
+	applied atomic.Pointer[Plan]
 
 	// executablePath returns the path of the running executable.
 	// Overridable for tests.

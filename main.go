@@ -112,18 +112,20 @@ func main() {
 	// start before the app has fully shut down: run still holds the single
 	// instance lock, and a second instance that finds the lock taken only
 	// raises the running window and exits.
-	if !run() {
+	updater := run()
+	if updater == nil {
 		return
 	}
-	if err := selfupdate.Relaunch(); err != nil {
+	if err := updater.Relaunch(); err != nil {
 		log.Printf("ERROR Failed to restart after update: %s", err)
 		os.Exit(1)
 	}
 }
 
-// run starts the application and blocks until it shuts down. It reports whether
-// the app should be relaunched, which the UI requests after applying an update.
-func run() (relaunch bool) {
+// run starts the application and blocks until it shuts down. It returns the
+// updater to relaunch with, when the UI requested a restart after applying an
+// update, and nil otherwise.
+func run() *selfupdate.Updater {
 	// init log & flags
 	slog.SetLogLoggerLevel(logLevelDefault)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -155,7 +157,7 @@ func run() (relaunch bool) {
 	fyneApp := fyneapp.NewWithID(appID)
 	if *versionFlag {
 		fmt.Println(fyneApp.Metadata().Version)
-		return
+		return nil
 	}
 
 	// File paths
@@ -187,7 +189,7 @@ func run() (relaunch bool) {
 		for k, v := range dataPaths.All() {
 			fmt.Printf("%s: %s\n", k, v)
 		}
-		return
+		return nil
 	}
 
 	// setup logfile for desktop
@@ -221,7 +223,7 @@ func run() (relaunch bool) {
 			log.Fatal(err)
 		}
 		client.Authorize(context.Background(), []string{})
-		return
+		return nil
 	}
 
 	if isDesktop {
@@ -263,7 +265,7 @@ func run() (relaunch bool) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		return
+		return nil
 	}
 
 	// start uninstall app if requested
@@ -271,7 +273,7 @@ func run() (relaunch bool) {
 		u := deleteapp.NewUI(fyneApp)
 		u.DataDir = dataDir
 		u.ShowAndRun()
-		return
+		return nil
 	}
 
 	// start pprof web server
@@ -437,7 +439,7 @@ func run() (relaunch bool) {
 			}
 		}
 		fmt.Printf("Deleted %d characters\n", ids.Size())
-		return
+		return nil
 	}
 
 	// Init UI
@@ -489,7 +491,10 @@ func run() (relaunch bool) {
 		u := core.NewMobileUI(params)
 		u.ShowAndRun()
 	}
-	return relaunchRequested.Load()
+	if !relaunchRequested.Load() {
+		return nil
+	}
+	return updater
 }
 
 // realtime represents the current time.

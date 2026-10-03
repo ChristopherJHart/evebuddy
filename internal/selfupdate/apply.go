@@ -19,7 +19,7 @@ import (
 // executable can be renamed but not deleted; it is removed by [Updater.Cleanup]
 // on the next start.
 //
-// Apply does not restart the app. Call [Relaunch] after shutdown.
+// Apply does not restart the app. Call [Updater.Relaunch] after shutdown.
 func (u *Updater) Apply(ctx context.Context, s *Staged) error {
 	if s.Dir == "" || s.ArchivePath == "" {
 		return fmt.Errorf("apply update: nothing staged")
@@ -63,6 +63,7 @@ func (u *Updater) Apply(ctx context.Context, s *Staged) error {
 		return fmt.Errorf("install new version, previous version restored: %w", err)
 	}
 	slog.Info("selfupdate: applied update", "version", s.Plan.Version, "target", target, "previous", old)
+	u.applied.Store(&s.Plan)
 
 	// The staging dir is now empty apart from the archive. Removing it here
 	// keeps the install directory clean even if the app never restarts.
@@ -104,34 +105,51 @@ func verifyReplacement(path string, k Kind) error {
 	return nil
 }
 
-// Relaunch starts a new instance of the installed app and returns immediately.
+// Relaunch starts the update installed by [Updater.Apply] and returns
+// immediately.
 //
 // It must only be called once the app has fully shut down. Two things make this
 // strict: the single instance mutex is still held until then, and a second
 // instance that finds the mutex taken will simply raise the running window and
 // exit, so an early relaunch silently does nothing.
-func Relaunch() error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locate executable for relaunch: %w", err)
+func (u *Updater) Relaunch() error {
+	p := u.applied.Load()
+	if p == nil {
+		return fmt.Errorf("relaunch: no update applied")
 	}
-	// os.Executable is resolved before the swap on Windows, where the running
-	// image keeps its original path; after the swap that path holds the new
-	// version, which is what should start.
-	cmd := exec.Command(exe)
-	cmd.Dir = filepath.Dir(exe)
+	cmd := relaunchCommand(*p)
 	// Detach from this process so the new instance survives our exit and does
 	// not inherit our standard streams.
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("relaunch %s: %w", exe, err)
+		return fmt.Errorf("relaunch %s: %w", cmd.Path, err)
 	}
 	// Release the child so it is not tied to this process' lifetime.
+	pid := cmd.Process.Pid
 	if err := cmd.Process.Release(); err != nil {
 		slog.Warn("selfupdate: failed to release relaunched process", "error", err)
 	}
-	slog.Info("selfupdate: relaunched", "path", exe, "pid", cmd.Process.Pid)
+	slog.Info("selfupdate: relaunched", "args", cmd.Args, "pid", pid)
 	return nil
+}
+
+// relaunchCommand returns the command that starts the installation an update
+// was applied to.
+//
+// The target path from the plan is used rather than os.Executable, which after
+// the swap no longer points at the new version: on Linux it follows the rename
+// to the removed ".old" file, and inside an AppImage it points into the old
+// image's temporary mount.
+func relaunchCommand(p Plan) *exec.Cmd {
+	var cmd *exec.Cmd
+	if p.Kind == KindMacBundle {
+		// A bundle is a directory, so it is started through Launch Services.
+		cmd = exec.Command("open", "-n", p.TargetPath)
+	} else {
+		cmd = exec.Command(p.TargetPath)
+	}
+	cmd.Dir = filepath.Dir(p.TargetPath)
+	return cmd
 }

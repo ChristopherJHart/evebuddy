@@ -155,8 +155,11 @@ func (u *Updater) unpackTarXZFile(ctx context.Context, archive, destDir, path st
 		if err != nil {
 			return "", fmt.Errorf("%w: read tar: %w", ErrMalformedArchive, err)
 		}
-		// Archive paths may carry a "./" prefix, so they are cleaned first.
-		if filepath.Clean(filepath.FromSlash(h.Name)) != want || h.Typeflag != tar.TypeReg {
+		// Archive paths may carry a "./" prefix, so they are cleaned first. The
+		// released archive also wraps everything in a top-level directory,
+		// e.g. "evebuddy/usr/local/bin/evebuddy", so a suffix match is enough.
+		name := filepath.Clean(filepath.FromSlash(h.Name))
+		if (name != want && !strings.HasSuffix(name, string(filepath.Separator)+want)) || h.Typeflag != tar.TypeReg {
 			continue
 		}
 		dest := filepath.Join(destDir, filepath.Base(want))

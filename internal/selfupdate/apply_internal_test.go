@@ -176,8 +176,9 @@ func TestDownloadAndApplyLinuxTar(t *testing.T) {
 	_, target := installDir(t, "evebuddy")
 	payload := newVersionPayload()
 	archive := makeTarXZ(t, map[string][]byte{
-		"usr/local/bin/evebuddy":                              payload,
-		"usr/local/share/applications/io.github.test.desktop": []byte("[Desktop Entry]"),
+		// Real releases wrap everything in a top-level directory.
+		"evebuddy/usr/local/bin/evebuddy":                              payload,
+		"evebuddy/usr/local/share/applications/io.github.test.desktop": []byte("[Desktop Entry]"),
 	})
 	asset := serveAsset("evebuddy-1.2.3-linux-amd64.tar.xz", archive)
 
@@ -461,4 +462,29 @@ func TestProgressWriterThrottles(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Equal(t, 1, throttled, fmt.Sprintf("expected throttling, got %d calls", throttled))
+}
+
+func TestRelaunchCommand(t *testing.T) {
+	cases := []struct {
+		name     string
+		plan     Plan
+		wantArgs []string
+	}{
+		{"windows", Plan{Kind: KindWindowsExe, TargetPath: filepath.Join("apps", "EVE Buddy.exe")}, []string{filepath.Join("apps", "EVE Buddy.exe")}},
+		{"linux tar", Plan{Kind: KindLinuxTar, TargetPath: filepath.Join("apps", "evebuddy")}, []string{filepath.Join("apps", "evebuddy")}},
+		{"appimage", Plan{Kind: KindAppImage, TargetPath: filepath.Join("apps", "EVE_Buddy.AppImage")}, []string{filepath.Join("apps", "EVE_Buddy.AppImage")}},
+		{"mac bundle", Plan{Kind: KindMacBundle, TargetPath: filepath.Join("apps", "EVE Buddy.app")}, []string{"open", "-n", filepath.Join("apps", "EVE Buddy.app")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := relaunchCommand(tc.plan)
+			assert.Equal(t, tc.wantArgs, cmd.Args)
+			assert.Equal(t, "apps", cmd.Dir)
+		})
+	}
+}
+
+func TestRelaunchWithoutApplyFails(t *testing.T) {
+	u := New(Config{})
+	assert.Error(t, u.Relaunch())
 }
